@@ -86,7 +86,7 @@ def call_groq(description: str) -> dict:
                 "Content-Type": "application/json",
             },
             json={
-                "model": "llama-3.3-70b-versatile",
+                "model": "llama3-70b-8192",
                 "temperature": 0.3,
                 "max_tokens": 2048,
                 "messages": [
@@ -140,16 +140,6 @@ def root():
         "status": "Physics Animator API is running",
         "configured_providers": configured,
     }
-
-
-@app.get("/providers")
-def check_providers():
-    """Debug: shows which API keys are loaded from .env"""
-    result = {}
-    for name, _ in PROVIDERS:
-        key = os.getenv(f"{name.upper()}_API_KEY")
-        result[name] = f"✅ loaded ({key[:8]}...)" if key else "❌ not set in .env"
-    return result
 
 
 @app.post("/generate")
