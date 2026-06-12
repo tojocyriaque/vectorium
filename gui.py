@@ -2,7 +2,7 @@
 Physics Animator — Pygame Frontend
 A clean, "explainer video" style UI (whiteboard / educational theme).
 
-Starts backend.py in a background thread automatically.
+Starts apis.py in a background thread automatically.
 Run:
     python frontend.py
 """
@@ -15,7 +15,7 @@ import math
 import pygame
 import requests
 
-import backend  # backend.py (FastAPI + Groq/Gemini)
+import apis  # apis.py (FastAPI + Groq/Gemini)
 
 API_URL = "http://127.0.0.1:8000/generate"
 
@@ -272,7 +272,7 @@ class App:
         if self.anim_data:
             sub = self.screen.subsurface(self.canvas_rect)
             
-            # preserve aspect ratio (600x400 from backend)
+            # preserve aspect ratio (600x400 from apis)
             aspect = 600 / 400
             if self.canvas_rect.height > 0:
                 rect_aspect = self.canvas_rect.width / self.canvas_rect.height
@@ -616,9 +616,9 @@ class App:
 
 
 if __name__ == "__main__":
-    server_thread = threading.Thread(target=backend.run_server, daemon=True)
+    server_thread = threading.Thread(target=apis.run_server, daemon=True)
     server_thread.start()
-    print("Backend running on http://127.0.0.1:8000  (opening Pygame window...)")
+    print("apis running on http://127.0.0.1:8000  (opening Pygame window...)")
 
     App().run()
     sys.exit(0)

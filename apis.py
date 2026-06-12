@@ -45,11 +45,26 @@ REQUIRED JSON SCHEMA:
       "height": <number px>,
       "keyframes": [
         {"t": 0.0, "x": <0-600>, "y": <0-400>, "rotation": 0, "opacity": 1, "scaleX": 1, "scaleY": 1}
+      ],
+      "vectors": [
+        {
+          "type": "velocity" | "force" | "acceleration",
+          "t": 0.0,
+          "x": <0-600>,
+          "y": <0-400>,
+          "dx": <number>,
+          "dy": <number>,
+          "magnitude": <0-50>
+        }
       ]
     }
   ],
   "explanations": [
-    {"t": 0.0, "text": "What's happening and why (physics principle), max 15 words"}
+    {
+      "t": 0.0, 
+      "text": "What's happening and why (physics principle), max 15 words",
+      "formula": "optional LaTeX formula string"
+    }
   ],
   "physics_summary": "2-3 sentences on the physics concepts demonstrated."
 }
@@ -68,6 +83,16 @@ PHYSICS RULES:
 - Collisions: at the moment of impact, both objects must have a keyframe at the SAME t value. After collision, velocities (position deltas per second) should change realistically based on momentum (e.g. object that was struck moves faster afterward, striking object slows or reverses).
 - Pendulums: x and y both change together tracing an arc (use 5+ keyframes per swing), amplitude decreases slightly each swing if "losing energy" is mentioned.
 - Use AT LEAST 5-8 keyframes per object for anything involving a bounce, collision, or multi-phase motion. Two keyframes is NEVER enough for realistic motion.
+
+VECTOR AND FORMULA RULES:
+- You MUST optionally generate formulas in explanations. Formulas should be LaTeX-compatible strings (e.g. "v = v_0 + at", "F = ma", "E = \\frac{1}{2} mv^2", "p = mv"). Use them for physics concepts like gravity, velocity, energy, momentum, etc. Ensure formulas match the event timing.
+- Keep the `text` field short (<= 15 words).
+- You MUST optionally generate `vectors` inside objects when physics is dynamic (motion, forces, collisions).
+- You SHOULD include vectors for projectile motion, bouncing, collisions, circular motion, rolling motion, and falling objects.
+- `velocity` vectors show direction of motion (blue).
+- `acceleration` vectors show change in velocity (gravity downward) (green).
+- `force` vectors appear during collisions (impact moment) (red).
+- Vectors must evolve over time using the per-object `vectors` list (specify `t` for when each vector state applies).
 
 GENERAL:
 - duration must be long enough to show the full event clearly (typically 3-6s).
@@ -113,16 +138,22 @@ FEW_SHOT_ASSISTANT = json.dumps({
                 {"t": 2.6,  "x": 385, "y": 335, "rotation": 610, "opacity": 1, "scaleX": 1, "scaleY": 1},
                 {"t": 2.9,  "x": 395, "y": 354, "rotation": 650, "opacity": 1, "scaleX": 1.05, "scaleY": 0.9},
                 {"t": 4.0,  "x": 410, "y": 354, "rotation": 700, "opacity": 1, "scaleX": 1, "scaleY": 1}
+            ],
+            "vectors": [
+                {"type": "velocity", "t": 0.0, "x": 100, "y": 175, "dx": 1, "dy": 0, "magnitude": 20},
+                {"type": "acceleration", "t": 0.9, "x": 280, "y": 175, "dx": 0, "dy": 1, "magnitude": 15},
+                {"type": "velocity", "t": 1.6, "x": 330, "y": 280, "dx": 1, "dy": 2, "magnitude": 30},
+                {"type": "force", "t": 1.85, "x": 345, "y": 354, "dx": 0, "dy": -1, "magnitude": 40}
             ]
         }
     ],
     "explanations": [
-        {"t": 0.0,  "text": "Ball rolls along the table at constant speed."},
+        {"t": 0.0,  "text": "Ball rolls along the table at constant speed.", "formula": "v = \\text{const}"},
         {"t": 0.9,  "text": "Ball leaves the table edge, becoming a projectile."},
-        {"t": 1.6,  "text": "Gravity accelerates the ball downward in an arc."},
-        {"t": 1.85, "text": "Impact! Ball compresses slightly and loses energy."},
-        {"t": 2.4,  "text": "Ball bounces again, but lower than before."},
-        {"t": 4.0,  "text": "Friction and energy loss bring the ball to rest."}
+        {"t": 1.6,  "text": "Gravity accelerates the ball downward in an arc.", "formula": "y = y_0 - \\frac{1}{2}gt^2"},
+        {"t": 1.85, "text": "Impact! Ball compresses slightly and loses energy.", "formula": "F = ma"},
+        {"t": 2.4,  "text": "Ball bounces again, but lower than before.", "formula": "E_{k2} < E_{k1}"},
+        {"t": 4.0,  "text": "Friction and energy loss bring the ball to rest.", "formula": "v = 0"}
     ],
     "physics_summary": "This demonstrates projectile motion: horizontal velocity stays constant while gravity accelerates the ball downward. Each bounce loses kinetic energy to heat and sound, so bounce height decreases until the ball settles."
 }, indent=2)
@@ -179,13 +210,31 @@ def validate_and_fix(data: dict) -> dict:
             fixed.append(last)
         obj["keyframes"] = fixed
 
+        vectors = obj.get("vectors")
+        if vectors is not None:
+            fixed_vecs = []
+            for v in vectors:
+                fixed_vecs.append({
+                    "type": str(v.get("type", "velocity")),
+                    "t": max(0.0, min(duration, float(v.get("t", 0)))),
+                    "x": max(0, min(600, float(v.get("x", 300)))),
+                    "y": max(0, min(400, float(v.get("y", 200)))),
+                    "dx": float(v.get("dx", 0)),
+                    "dy": float(v.get("dy", 0)),
+                    "magnitude": max(0.0, min(50.0, float(v.get("magnitude", 10)))),
+                })
+            obj["vectors"] = fixed_vecs
+
     exps = data.get("explanations", [])
     fixed_exps = []
     for ex in exps:
-        fixed_exps.append({
+        fixed_exp = {
             "t": max(0.0, min(duration, float(ex.get("t", 0)))),
             "text": str(ex.get("text", ""))[:200],
-        })
+        }
+        if "formula" in ex:
+            fixed_exp["formula"] = str(ex["formula"])
+        fixed_exps.append(fixed_exp)
     fixed_exps.sort(key=lambda e: e["t"])
     if not fixed_exps:
         fixed_exps = [{"t": 0.0, "text": "Animation begins."}]
