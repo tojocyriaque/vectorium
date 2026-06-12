@@ -4,7 +4,7 @@ A clean, "explainer video" style UI (whiteboard / educational theme).
 
 Starts apis.py in a background thread automatically.
 Run:
-    python frontend.py
+    python gui.py
 """
 
 import threading
@@ -47,6 +47,7 @@ def ease_in_out(t):
 
 
 def get_prop(keyframes, t, prop, default=0):
+    if not keyframes: return default
     kfs = sorted(keyframes, key=lambda k: k["t"])
     if t <= kfs[0]["t"]:
         return kfs[0].get(prop, default)
@@ -78,12 +79,12 @@ def with_alpha(color, alpha):
 # ─── Drawing primitives ────────────────────────────────────────────────────────
 
 def draw_object(surface, obj, t, trail_points=None):
-    x = get_prop(obj["keyframes"], t, "x", 300)
-    y = get_prop(obj["keyframes"], t, "y", 200)
-    rotation = get_prop(obj["keyframes"], t, "rotation", 0)
-    opacity = get_prop(obj["keyframes"], t, "opacity", 1)
-    scale_x = get_prop(obj["keyframes"], t, "scaleX", 1)
-    scale_y = get_prop(obj["keyframes"], t, "scaleY", 1)
+    x = get_prop(obj.get("keyframes", []), t, "x", 300)
+    y = get_prop(obj.get("keyframes", []), t, "y", 200)
+    rotation = get_prop(obj.get("keyframes", []), t, "rotation", 0)
+    opacity = get_prop(obj.get("keyframes", []), t, "opacity", 1)
+    scale_x = get_prop(obj.get("keyframes", []), t, "scaleX", 1)
+    scale_y = get_prop(obj.get("keyframes", []), t, "scaleY", 1)
 
     w = obj.get("width", 30) * scale_x
     h = obj.get("height", 30) * scale_y
@@ -126,6 +127,61 @@ def draw_object(surface, obj, t, trail_points=None):
             surface.blit(shadow, (pos.x + dx, pos.y + dy))
         surface.blit(text, pos)
 
+def draw_vectors(surface, obj, t):
+    vectors = obj.get("vectors", [])
+    if not vectors: return
+    
+    v_by_type = {}
+    for v in vectors:
+        v_by_type.setdefault(v.get("type", "velocity"), []).append(v)
+        
+    for v_type, vecs in v_by_type.items():
+        vecs.sort(key=lambda k: k["t"])
+        if len(vecs) == 1:
+            v = vecs[0]
+            dt = abs(t - v["t"])
+            if dt > 0.5: continue
+            alpha = max(0, 1.0 - (dt / 0.5))
+            v_dx, v_dy, v_mag = v.get("dx", 0), v.get("dy", 0), v.get("magnitude", 0) * alpha
+            v_x, v_y = v.get("x", 0), v.get("y", 0)
+        else:
+            if t < vecs[0]["t"] - 0.5 or t > vecs[-1]["t"] + 0.5:
+                continue
+            
+            v_dx = get_prop(vecs, t, "dx", 0)
+            v_dy = get_prop(vecs, t, "dy", 0)
+            v_mag = get_prop(vecs, t, "magnitude", 0)
+            v_x = get_prop(vecs, t, "x", 0)
+            v_y = get_prop(vecs, t, "y", 0)
+            
+            if t < vecs[0]["t"]:
+                v_mag *= max(0, 1.0 - (vecs[0]["t"] - t) / 0.5)
+            elif t > vecs[-1]["t"]:
+                v_mag *= max(0, 1.0 - (t - vecs[-1]["t"]) / 0.5)
+
+        if v_mag < 0.5: continue
+        
+        if v_type == "velocity": color = (59, 130, 246)
+        elif v_type == "acceleration": color = (16, 185, 129)
+        elif v_type == "force": color = (239, 68, 68)
+        else: color = (100, 100, 100)
+        
+        length = v_mag * 3 
+        dist = math.hypot(v_dx, v_dy)
+        if dist > 0.001:
+            nx, ny = v_dx / dist, v_dy / dist
+        else:
+            nx, ny = 1, 0
+            
+        end_x = v_x + nx * length
+        end_y = v_y + ny * length
+        
+        pygame.draw.line(surface, color, (v_x, v_y), (end_x, end_y), 3)
+        head_len = 8
+        angle = math.atan2(ny, nx)
+        p1 = (end_x - head_len * math.cos(angle - math.pi/6), end_y - head_len * math.sin(angle - math.pi/6))
+        p2 = (end_x - head_len * math.cos(angle + math.pi/6), end_y - head_len * math.sin(angle + math.pi/6))
+        pygame.draw.polygon(surface, color, [(end_x, end_y), p1, p2])
 
 def rounded_rect(surface, rect, color, radius=10, width=0):
     pygame.draw.rect(surface, color, rect, width, border_radius=radius)
@@ -201,6 +257,7 @@ class App:
         self.loading_timer = 0.0
         self.error_msg = ""
         self.mouse_pos = (0, 0)
+        self.show_summary = False
 
         # trail history: obj_id -> list of (x, y)
         self.trails = {}
@@ -213,26 +270,21 @@ class App:
         self.width = w
         self.height = h
         
-        pad = 20
-        self.input_h = 80
-        self.summary_h = 90
-        self.controls_h = 64
-        self.explain_h = 70
+        self.canvas_rect = pygame.Rect(0, 0, self.width, self.height)
         
-        self.input_rect = pygame.Rect(0, self.height - self.input_h, self.width, self.input_h)
-        self.summary_rect = pygame.Rect(0, self.input_rect.top - self.summary_h, self.width, self.summary_h)
-        self.controls_rect = pygame.Rect(0, self.summary_rect.top - self.controls_h, self.width, self.controls_h)
-        self.explain_rect = pygame.Rect(0, self.controls_rect.top - self.explain_h, self.width, self.explain_h)
-        self.canvas_rect = pygame.Rect(0, 0, self.width, max(0, self.explain_rect.top))
-
-        box_w = min(800, self.width - 2 * pad - 60)
-        box_x = (self.width - box_w - 50) // 2
-        if box_x < pad: box_x = pad
-        self.input_box = pygame.Rect(box_x, self.input_rect.top + 18, box_w, 44)
-        self.send_btn = pygame.Rect(self.input_box.right + 12, self.input_rect.top + 18, 44, 44)
-
-        self.play_btn = pygame.Rect(pad, self.controls_rect.top + 12, 80, 40)
-        self.scrubber_rect = pygame.Rect(self.play_btn.right + pad, self.controls_rect.top + 28, self.width - self.play_btn.right - 2 * pad, 8)
+        box_w = min(600, self.width - 40)
+        self.input_box = pygame.Rect((self.width - box_w) // 2, self.height - 70, box_w, 50)
+        self.send_btn = pygame.Rect(self.input_box.right - 46, self.input_box.top + 5, 40, 40)
+        
+        ctrl_w = 400
+        self.controls_rect = pygame.Rect((self.width - ctrl_w) // 2, self.input_box.top - 60, ctrl_w, 40)
+        self.play_btn = pygame.Rect(self.controls_rect.x + 10, self.controls_rect.y + 5, 30, 30)
+        self.scrubber_rect = pygame.Rect(self.play_btn.right + 15, self.controls_rect.y + 16, ctrl_w - 65, 8)
+        
+        self.explain_rect = pygame.Rect((self.width - 600) // 2, self.controls_rect.top - 60, 600, 50)
+        
+        self.summary_toggle_btn = pygame.Rect(self.width - 50, 20, 30, 30)
+        self.summary_rect = pygame.Rect(self.width - 320, 60, 300, 200)
 
     # ── networking ────────────────────────────────────────────────────────
     def do_generate(self):
@@ -249,9 +301,11 @@ class App:
                 self.current_t = 0.0
                 self.playing = False
                 self.trails = {}
+                self.show_summary = False
             except Exception as e:
                 self.error_msg = f"Error: {e}"
                 self.anim_data = None
+                self.show_summary = True
             finally:
                 self.loading = False
 
@@ -291,8 +345,8 @@ class App:
             # update trails (sample positions over time)
             for obj in self.anim_data["objects"]:
                 oid = obj["id"]
-                x = get_prop(obj["keyframes"], self.current_t, "x", 300)
-                y = get_prop(obj["keyframes"], self.current_t, "y", 200)
+                x = get_prop(obj.get("keyframes", []), self.current_t, "x", 300)
+                y = get_prop(obj.get("keyframes", []), self.current_t, "y", 200)
                 
                 screen_x = draw_x + x * (draw_w / 600)
                 screen_y = draw_y + y * (draw_h / 400)
@@ -306,11 +360,14 @@ class App:
                     self.trails[oid] = []
             self.last_trail_t = self.current_t
 
-            # draw scaled objects
+            # draw scaled objects & vectors
             if draw_w > 0 and draw_h > 0:
                 base = pygame.Surface((600, 400), pygame.SRCALPHA)
                 for obj in self.anim_data["objects"]:
                     draw_object(base, obj, self.current_t)
+                for obj in self.anim_data["objects"]:
+                    draw_vectors(base, obj, self.current_t)
+                    
                 scaled = pygame.transform.smoothscale(base, (int(draw_w), int(draw_h)))
                 sub.blit(scaled, (int(draw_x), int(draw_y)))
 
@@ -339,7 +396,8 @@ class App:
             t_bg = pygame.Surface((t_surf.get_width() + 16, t_surf.get_height() + 10), pygame.SRCALPHA)
             rounded_rect(t_bg, t_bg.get_rect(), (255, 255, 255, 210), radius=8)
             t_bg.blit(t_surf, (8, 5))
-            sub.blit(t_bg, (self.canvas_rect.width - t_bg.get_width() - 16, 16))
+            # offset from toggle button
+            sub.blit(t_bg, (self.canvas_rect.width - t_bg.get_width() - 60, 20))
 
         else:
             # Empty / welcome state
@@ -353,52 +411,54 @@ class App:
                 load_surf = self.font_body.render(f"Generating animation{dots}", True, ACCENT)
                 self.screen.blit(load_surf, load_surf.get_rect(center=(self.canvas_rect.width // 2, self.canvas_rect.height // 2 + 45)))
 
-        pygame.draw.line(self.screen, BORDER, self.canvas_rect.bottomleft, self.canvas_rect.bottomright, 1)
-
-        # loading shimmer bar
+        # loading shimmer bar at top
         if self.loading and self.anim_data:
             bar_w = self.width * (0.3 + 0.7 * (0.5 + 0.5 * math.sin(self.loading_timer * 4)))
             pygame.draw.rect(self.screen, ACCENT, (0, 0, int(bar_w), 4))
 
     def draw_explanation(self):
-        pygame.draw.rect(self.screen, PANEL, self.explain_rect)
-        pygame.draw.line(self.screen, BORDER, self.explain_rect.topleft, self.explain_rect.topright, 1)
-
-        # "Teacher narration" style
-        pygame.draw.circle(self.screen, ACCENT, (30, self.explain_rect.centery), 6)
+        if not self.anim_data: return
+        exp = get_current_explanation(self.anim_data.get("explanations", []), self.current_t)
+        text = exp.get("text", "")
+        formula = exp.get("formula", "")
+        if not text and not formula: return
         
-        if self.anim_data:
-            exp = get_current_explanation(self.anim_data.get("explanations", []), self.current_t)
-            lines = wrap_text(exp.get("text", ""), self.font_body, self.width - 70)
-            total_h = len(lines) * 20
-            start_y = self.explain_rect.top + (self.explain_rect.height - total_h) // 2
-            for i, line in enumerate(lines[:2]):
-                surf = self.font_body.render(line, True, TEXT_MAIN)
-                self.screen.blit(surf, (48, start_y + i * 20))
-        else:
-            hint = self.font_body.render("Teacher's explanation will appear here...", True, TEXT_MUTED)
-            self.screen.blit(hint, (48, self.explain_rect.centery - hint.get_height()//2))
+        # Draw floating subtitle overlay
+        lines = wrap_text(text, self.font_body, 560)
+        total_h = len(lines) * 20 + (25 if formula else 0) + 20
+        bg_rect = pygame.Rect(0, 0, 580, total_h)
+        bg_rect.center = (self.width // 2, self.controls_rect.top - 20 - total_h // 2)
+        
+        rounded_rect(self.screen, bg_rect, (0, 0, 0, 160), radius=12) # Dark semi-transparent
+        
+        start_y = bg_rect.top + 10
+        for i, line in enumerate(lines[:2]):
+            surf = self.font_body.render(line, True, WHITE)
+            self.screen.blit(surf, surf.get_rect(center=(self.width // 2, start_y + i * 20 + 10)))
+            
+        if formula:
+            formula_surf = self.font_title.render(f"{formula}", True, (255, 215, 0)) # Gold formula
+            self.screen.blit(formula_surf, formula_surf.get_rect(center=(self.width // 2, bg_rect.bottom - 18)))
 
     def draw_controls(self):
-        pygame.draw.rect(self.screen, PANEL, self.controls_rect)
-        pygame.draw.line(self.screen, BORDER, self.controls_rect.topleft, self.controls_rect.topright, 1)
-
-        if not self.anim_data:
-            return
-
+        if not self.anim_data: return
         duration = self.anim_data.get("duration", 1)
 
+        draw_shadow(self.screen, self.controls_rect, radius=20, alpha=20)
+        rounded_rect(self.screen, self.controls_rect, PANEL, radius=20)
+        rounded_rect(self.screen, self.controls_rect, BORDER, radius=20, width=1)
+        
         # Play/Pause button
         hovering_play = self.play_btn.collidepoint(self.mouse_pos)
         color = ACCENT_HOVER if hovering_play else ACCENT
-        rounded_rect(self.screen, self.play_btn, color, radius=8)
+        rounded_rect(self.screen, self.play_btn, color, radius=15)
         
         cx, cy = self.play_btn.center
         if self.playing:
-            pygame.draw.rect(self.screen, WHITE, (cx - 6, cy - 6, 4, 12), border_radius=1)
-            pygame.draw.rect(self.screen, WHITE, (cx + 2, cy - 6, 4, 12), border_radius=1)
+            pygame.draw.rect(self.screen, WHITE, (cx - 4, cy - 5, 3, 10), border_radius=1)
+            pygame.draw.rect(self.screen, WHITE, (cx + 2, cy - 5, 3, 10), border_radius=1)
         else:
-            pygame.draw.polygon(self.screen, WHITE, [(cx - 4, cy - 7), (cx - 4, cy + 7), (cx + 6, cy)])
+            pygame.draw.polygon(self.screen, WHITE, [(cx - 3, cy - 5), (cx - 3, cy + 5), (cx + 5, cy)])
 
         # Scrubber track
         rounded_rect(self.screen, self.scrubber_rect, (226, 232, 240), radius=4)
@@ -411,29 +471,33 @@ class App:
         # explanation markers
         for ex in self.anim_data.get("explanations", []):
             mx = self.scrubber_rect.x + int(self.scrubber_rect.width * (ex["t"] / duration))
-            pygame.draw.circle(self.screen, ACCENT3, (mx, self.scrubber_rect.centery), 4)
-            pygame.draw.circle(self.screen, WHITE, (mx, self.scrubber_rect.centery), 2)
+            pygame.draw.circle(self.screen, (255, 215, 0) if ex.get("formula") else ACCENT3, (mx, self.scrubber_rect.centery), 4)
 
         # handle
         handle_x = self.scrubber_rect.x + fill_w
-        pygame.draw.circle(self.screen, WHITE, (handle_x, self.scrubber_rect.centery), 8)
-        pygame.draw.circle(self.screen, ACCENT, (handle_x, self.scrubber_rect.centery), 8, 2)
+        pygame.draw.circle(self.screen, WHITE, (handle_x, self.scrubber_rect.centery), 6)
+        pygame.draw.circle(self.screen, ACCENT, (handle_x, self.scrubber_rect.centery), 6, 2)
         
         # hover on scrubber
         expanded = self.scrubber_rect.inflate(0, 16)
         if expanded.collidepoint(self.mouse_pos):
-            pygame.draw.circle(self.screen, ACCENT, (handle_x, self.scrubber_rect.centery), 12, 1)
-
-        # time label
-        info = f"{self.current_t:0.2f}s / {duration:0.1f}s"
-        info_surf = self.font_tiny.render(info, True, TEXT_MUTED)
-        self.screen.blit(info_surf, (self.scrubber_rect.x, self.scrubber_rect.bottom + 8))
+            pygame.draw.circle(self.screen, ACCENT, (handle_x, self.scrubber_rect.centery), 10, 1)
 
     def draw_summary(self):
-        pygame.draw.rect(self.screen, BG, self.summary_rect)
-        pygame.draw.line(self.screen, BORDER, self.summary_rect.topleft, self.summary_rect.topright, 1)
+        if not self.anim_data and not self.error_msg: return
+        
+        # Draw toggle button
+        hovering_toggle = self.summary_toggle_btn.collidepoint(self.mouse_pos)
+        toggle_col = PANEL if hovering_toggle else (240, 240, 240)
+        rounded_rect(self.screen, self.summary_toggle_btn, toggle_col, radius=15)
+        rounded_rect(self.screen, self.summary_toggle_btn, BORDER, radius=15, width=1)
+        icon_text = "-" if self.show_summary else "i"
+        icon_surf = self.font_body.render(icon_text, True, TEXT_MAIN)
+        self.screen.blit(icon_surf, icon_surf.get_rect(center=self.summary_toggle_btn.center))
 
-        card_rect = self.summary_rect.inflate(-40, -20)
+        if not self.show_summary: return
+
+        card_rect = self.summary_rect
         draw_shadow(self.screen, card_rect, radius=8, alpha=15)
         rounded_rect(self.screen, card_rect, PANEL, radius=8)
         rounded_rect(self.screen, card_rect, BORDER, radius=8, width=1)
@@ -442,64 +506,64 @@ class App:
             label = self.font_tiny.render("KEY CONCEPTS", True, ACCENT)
             self.screen.blit(label, (card_rect.x + 16, card_rect.y + 10))
             
-            lines = wrap_text(self.anim_data["physics_summary"], self.font_body, card_rect.width - 32)
-            for i, line in enumerate(lines[:2]):
+            lines = []
+            for block in self.anim_data["physics_summary"].split('\n'):
+                lines.extend(wrap_text(block, self.font_body, card_rect.width - 32))
+            for i, line in enumerate(lines[:8]):
                 surf = self.font_body.render(line, True, TEXT_MAIN)
                 self.screen.blit(surf, (card_rect.x + 16, card_rect.y + 30 + i * 20))
         elif self.error_msg:
             label = self.font_tiny.render("ERROR", True, ERROR)
             self.screen.blit(label, (card_rect.x + 16, card_rect.y + 10))
-            for i, line in enumerate(wrap_text(self.error_msg, self.font_body, card_rect.width - 32)[:2]):
+            for i, line in enumerate(wrap_text(self.error_msg, self.font_body, card_rect.width - 32)[:4]):
                 surf = self.font_body.render(line, True, ERROR)
                 self.screen.blit(surf, (card_rect.x + 16, card_rect.y + 30 + i * 20))
 
     def draw_input_bar(self):
-        pygame.draw.rect(self.screen, BG, self.input_rect)
-        pygame.draw.line(self.screen, BORDER, self.input_rect.topleft, self.input_rect.topright, 1)
-
         box_color = PANEL
         border_col = ACCENT if self.input_active else BORDER
         
-        draw_shadow(self.screen, self.input_box, radius=22, alpha=10, offset=(0,2))
+        draw_shadow(self.screen, self.input_box, radius=25, alpha=15, offset=(0,4))
         
-        rounded_rect(self.screen, self.input_box, box_color, radius=22)
-        rounded_rect(self.screen, self.input_box, border_col, radius=22, width=2)
+        rounded_rect(self.screen, self.input_box, box_color, radius=25)
+        rounded_rect(self.screen, self.input_box, border_col, radius=25, width=2)
 
+        txt_rect = pygame.Rect(self.input_box.x + 20, self.input_box.y, self.input_box.width - 70, self.input_box.height)
         if self.input_text:
             txt = self.input_text
             surf = self.font_body.render(txt, True, TEXT_MAIN)
-            while surf.get_width() > self.input_box.width - 30 and len(txt) > 1:
+            while surf.get_width() > txt_rect.width and len(txt) > 1:
                 txt = txt[1:]
                 surf = self.font_body.render(txt, True, TEXT_MAIN)
-            self.screen.blit(surf, (self.input_box.x + 16, self.input_box.y + (self.input_box.height - surf.get_height()) // 2))
+            self.screen.blit(surf, (txt_rect.x, txt_rect.y + (txt_rect.height - surf.get_height()) // 2))
         else:
             surf = self.font_body.render(self.placeholder, True, TEXT_MUTED)
-            self.screen.blit(surf, (self.input_box.x + 16, self.input_box.y + (self.input_box.height - surf.get_height()) // 2))
+            self.screen.blit(surf, (txt_rect.x, txt_rect.y + (txt_rect.height - surf.get_height()) // 2))
 
         # cursor
         if self.input_active and self.cursor_visible:
             txt_w = self.font_body.size(self.input_text)[0] if self.input_text else 0
-            cx = self.input_box.x + 16 + min(txt_w, self.input_box.width - 30)
-            pygame.draw.line(self.screen, ACCENT, (cx, self.input_box.y + 10), (cx, self.input_box.bottom - 10), 2)
+            cx = txt_rect.x + min(txt_w, txt_rect.width) + 2
+            pygame.draw.line(self.screen, ACCENT, (cx, txt_rect.y + 12), (cx, txt_rect.bottom - 12), 2)
 
         # send button
         can_send = bool(self.input_text.strip()) and not self.loading
         hovering_send = self.send_btn.collidepoint(self.mouse_pos)
         send_color = ACCENT_HOVER if (can_send and hovering_send) else (ACCENT if can_send else BORDER)
         
-        rounded_rect(self.screen, self.send_btn, send_color, radius=22)
+        rounded_rect(self.screen, self.send_btn, send_color, radius=20)
         cx, cy = self.send_btn.center
         if self.loading:
             angle = (time.time() * 6) % (2 * math.pi)
             for i in range(8):
                 a = angle + i * (math.pi / 4)
                 alpha = int(255 * (i + 1) / 8)
-                ex_ = cx + math.cos(a) * 8
-                ey_ = cy + math.sin(a) * 8
-                pygame.draw.circle(self.screen, with_alpha(WHITE, alpha)[:3], (int(ex_), int(ey_)), 2)
+                ex_ = cx + math.cos(a) * 6
+                ey_ = cy + math.sin(a) * 6
+                pygame.draw.circle(self.screen, with_alpha(WHITE, alpha)[:3], (int(ex_), int(ey_)), 1.5)
         else:
             icon_col = WHITE if can_send else TEXT_MUTED
-            pygame.draw.polygon(self.screen, icon_col, [(cx - 4, cy - 6), (cx - 4, cy + 6), (cx + 6, cy)])
+            pygame.draw.polygon(self.screen, icon_col, [(cx - 3, cy - 5), (cx - 3, cy + 5), (cx + 5, cy)])
 
     # ── event handling ────────────────────────────────────────────────────
     def handle_event(self, event):
@@ -535,11 +599,14 @@ class App:
         elif event.type == pygame.MOUSEBUTTONDOWN:
             mx, my = event.pos
             # Allow clicking anywhere near input area to focus
-            self.input_active = self.input_box.collidepoint(mx, my) or self.input_rect.collidepoint(mx, my)
+            self.input_active = self.input_box.collidepoint(mx, my)
 
             if self.send_btn.collidepoint(mx, my):
                 self.do_generate()
                 self.input_active = True
+
+            if self.summary_toggle_btn.collidepoint(mx, my):
+                self.show_summary = not self.show_summary
 
             if self.anim_data:
                 if self.play_btn.collidepoint(mx, my):
