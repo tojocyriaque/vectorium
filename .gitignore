@@ -6,3 +6,7 @@ presentation_report.md
 seminar_presentation.md
 *.pdf
 *.pptx
+*.md
+convert*
+detailed*
+Vectorium*
