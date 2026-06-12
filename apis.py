@@ -27,8 +27,8 @@ app.add_middleware(
 
 # ─── Prompt ───────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are a physics animation engine. Given a description of a physical event,
-output ONLY a single valid JSON object (no markdown, no prose, no code fences) describing the animation.
+SYSTEM_PROMPT = """You are a physics animation engine and educational narration system. Given a description of a physical event,
+output ONLY a single valid JSON object (no markdown, no prose, no code fences) describing the animation and narration.
 
 REQUIRED JSON SCHEMA:
 {
@@ -63,7 +63,9 @@ REQUIRED JSON SCHEMA:
     {
       "t": 0.0, 
       "text": "What's happening and why (physics principle), max 15 words",
-      "formula": "optional LaTeX formula string"
+      "formula": "optional LaTeX formula string",
+      "emphasis": ["velocity", "gravity", "momentum"],
+      "audio_hint": "optional spoken phrase (same meaning as text)"
     }
   ],
   "physics_summary": "2-3 sentences on the physics concepts demonstrated."
@@ -72,33 +74,32 @@ REQUIRED JSON SCHEMA:
 CANVAS RULES:
 - Canvas is 600 wide x 400 tall. (0,0) is top-left. Ground/floor is at y=370.
 - x,y of every object = its CENTER point.
-- Objects must stay within 0-600 (x) and 0-400 (y) at all times — never off-screen.
-- A "table" or "ledge" should be drawn as a rect object with its top surface at a specific y; objects resting on it should have their center y = (table_top_y - object_height/2).
-- Round objects sitting on the ground have center y = 370 - radius.
+- Objects must stay within 0-600 (x) and 0-400 (y) at all times.
 
-PHYSICS RULES:
-- Gravity: falling objects accelerate — keyframe spacing should reflect increasing y-displacement over equal time steps (e.g. y moves little at first, then a lot).
-- Bounces: each bounce loses ~40-50% of height. A "bounce twice" event needs at least 2 visible peaks of decreasing height after the first impact, each as its own keyframe.
-- Rolling: a rolling object should both translate (x changes) AND rotate (rotation increases continuously, roughly proportional to distance traveled / radius).
-- Collisions: at the moment of impact, both objects must have a keyframe at the SAME t value. After collision, velocities (position deltas per second) should change realistically based on momentum (e.g. object that was struck moves faster afterward, striking object slows or reverses).
-- Pendulums: x and y both change together tracing an arc (use 5+ keyframes per swing), amplitude decreases slightly each swing if "losing energy" is mentioned.
-- Use AT LEAST 5-8 keyframes per object for anything involving a bounce, collision, or multi-phase motion. Two keyframes is NEVER enough for realistic motion.
+PHYSICS & MOTION RULES:
+- Gravity: falling objects accelerate (y-displacement increases).
+- Bounces: each bounce loses ~40-50% of height.
+- Collisions: at the moment of impact, both objects must have a keyframe at the SAME t value. Momentum must be conserved.
+- Pendulums: use 5+ keyframes per swing to trace an arc.
+- Use AT LEAST 5-8 keyframes per object for complex motion. Two keyframes is NEVER enough for realistic motion.
 
-VECTOR AND FORMULA RULES:
-- You MUST optionally generate formulas in explanations. Formulas should be LaTeX-compatible strings (e.g. "v = v_0 + at", "F = ma", "E = \\frac{1}{2} mv^2", "p = mv"). Use them for physics concepts like gravity, velocity, energy, momentum, etc. Ensure formulas match the event timing.
-- Keep the `text` field short (<= 15 words).
-- You MUST optionally generate `vectors` inside objects when physics is dynamic (motion, forces, collisions).
-- You SHOULD include vectors for projectile motion, bouncing, collisions, circular motion, rolling motion, and falling objects.
-- `velocity` vectors show direction of motion (blue).
-- `acceleration` vectors show change in velocity (gravity downward) (green).
-- `force` vectors appear during collisions (impact moment) (red).
-- Vectors must evolve over time using the per-object `vectors` list (specify `t` for when each vector state applies).
+NARRATION ENGINE & TIMING RULES (CRITICAL):
+- Act like a physics professor explaining the scene live. Treat time `t` as STRUCTURED TEACHING MOMENTS.
+- Only ONE main idea per timestamp.
+- Examples of timing: t=0.0 (initial condition), t=0.5 (motion begins), t=1.0 (acceleration explained), t=1.5 (impact event).
+- The `explanations` array represents Narration Events. Keep `text` short and time-accurate. Avoid redundant explanations.
+- Include formulas ONLY when the concept is first introduced, synchronized exactly with the moment it becomes relevant (e.g., F=ma exactly at the collision t).
+
+VECTOR RULES (SYNCHRONIZED):
+- Vectors MUST be synchronized with Narration Events! A vector cannot exist without a corresponding physical narration event.
+- `velocity` vectors appear when narration mentions motion (blue).
+- `acceleration` vectors appear when physics mentions forces (e.g. gravity) (green).
+- `force` vectors appear ONLY during interactions (collision, push, impact) (red).
 
 GENERAL:
 - duration must be long enough to show the full event clearly (typically 3-6s).
-- Include a ground/table/wall object as needed for context, with shape "rect" and a fixed (non-animated, but still provide >=2 identical keyframes) position.
+- Include a ground/table/wall object as needed for context (shape "rect").
 - Colors vivid and distinct between objects.
-- explanations: at least 5, spread across the full timeline, each tied to a specific physics moment (start, mid-fall, impact, bounce, rest, etc).
 - Return ONLY the JSON object."""
 
 FEW_SHOT_USER = "A ball rolls off a table and falls to the ground, bouncing once before coming to rest"
@@ -148,12 +149,12 @@ FEW_SHOT_ASSISTANT = json.dumps({
         }
     ],
     "explanations": [
-        {"t": 0.0,  "text": "Ball rolls along the table at constant speed.", "formula": "v = \\text{const}"},
-        {"t": 0.9,  "text": "Ball leaves the table edge, becoming a projectile."},
-        {"t": 1.6,  "text": "Gravity accelerates the ball downward in an arc.", "formula": "y = y_0 - \\frac{1}{2}gt^2"},
-        {"t": 1.85, "text": "Impact! Ball compresses slightly and loses energy.", "formula": "F = ma"},
-        {"t": 2.4,  "text": "Ball bounces again, but lower than before.", "formula": "E_{k2} < E_{k1}"},
-        {"t": 4.0,  "text": "Friction and energy loss bring the ball to rest.", "formula": "v = 0"}
+        {"t": 0.0,  "text": "Ball rolls along the table at constant speed.", "formula": "v = \\text{const}", "emphasis": ["velocity", "constant speed"], "audio_hint": "The ball begins by rolling along the table at a constant speed."},
+        {"t": 0.9,  "text": "Ball leaves the table edge, becoming a projectile.", "emphasis": ["projectile motion", "gravity"], "audio_hint": "As it leaves the edge, it becomes a projectile subject to gravity."},
+        {"t": 1.6,  "text": "Gravity accelerates the ball downward in an arc.", "formula": "y = y_0 - \\frac{1}{2}gt^2", "emphasis": ["acceleration", "downward force"], "audio_hint": "Gravity accelerates the ball downward, forming a parabolic arc."},
+        {"t": 1.85, "text": "Impact! Ball compresses slightly and loses energy.", "formula": "F = ma", "emphasis": ["collision", "force"], "audio_hint": "Upon impact, a sudden normal force acts on the ball."},
+        {"t": 2.4,  "text": "Ball bounces again, but lower than before.", "formula": "E_{k2} < E_{k1}", "emphasis": ["energy loss", "inelastic"], "audio_hint": "Energy is lost as heat and sound, so each subsequent bounce is lower."},
+        {"t": 4.0,  "text": "Friction and energy loss bring the ball to rest.", "formula": "v = 0", "emphasis": ["friction", "rest"], "audio_hint": "Eventually, friction and energy loss bring the ball completely to rest."}
     ],
     "physics_summary": "This demonstrates projectile motion: horizontal velocity stays constant while gravity accelerates the ball downward. Each bounce loses kinetic energy to heat and sound, so bounce height decreases until the ball settles."
 }, indent=2)
@@ -234,6 +235,12 @@ def validate_and_fix(data: dict) -> dict:
         }
         if "formula" in ex:
             fixed_exp["formula"] = str(ex["formula"])
+            
+        fixed_exp["emphasis"] = [str(x) for x in ex.get("emphasis", []) if isinstance(x, str)]
+        
+        if "audio_hint" in ex:
+            fixed_exp["audio_hint"] = str(ex["audio_hint"])
+            
         fixed_exps.append(fixed_exp)
     fixed_exps.sort(key=lambda e: e["t"])
     if not fixed_exps:
