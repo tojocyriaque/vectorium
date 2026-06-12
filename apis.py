@@ -86,10 +86,17 @@ KEYFRAME DENSITY RULE (CRITICAL):
 
 PHYSICS & MOTION RULES (STRICT & DETERMINISTIC):
 - ABSOLUTE RULE: Objects MUST NEVER overlap or interpenetrate.
-- COLLISION RULE: Collisions MUST occur EXACTLY at a shared keyframe timestamp `t`. Both objects must have a keyframe at the exact moment of impact. Their boundaries must be touching (not overlapping). The keyframe IMMEDIATELY AFTER must show the velocity reversal.
-- Gravity: falling objects accelerate (y-displacement between keyframes increases quadratically).
-- Bounces: each bounce loses energy. Height of bounce N+1 < height of bounce N.
-- Pendulums: use 5+ keyframes per swing to trace an arc.
+- COLLISION RULE: Collisions MUST occur EXACTLY at a shared keyframe timestamp `t`. 
+  Velocity change MUST be a perfect step function at that exact timestamp.
+  The keyframe at collision time shows contact position.
+  The very next keyframe MUST reflect the new velocity instantly.
+- STRAIGHT-LINE SEGMENTS ONLY: Every segment between non-collision keyframes 
+  must be perfectly straight (constant velocity vector). 
+  Do NOT add any intermediate keyframes that create even slight curvature.
+  For straight rolling (billiard balls), use exactly TWO keyframes per phase.
+- NO PRE-COLLISION BENDING: Never generate keyframes that make an object 
+  gradually turn before the collision timestamp. Direction changes are ONLY 
+  allowed at the collision keyframe itself.
 
 ROLLING ROTATION RULE:
 - The frontend computes rotation AUTOMATICALLY for sphere/billiard_ball types from horizontal displacement.
