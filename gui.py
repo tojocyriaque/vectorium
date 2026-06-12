@@ -1,5 +1,5 @@
 """
-Physics Animator — Pygame Frontend
+Vectorium - Physics in motion — Pygame Frontend
 A clean, "explainer video" style UI (whiteboard / educational theme).
 
 Starts physics_ai.py in a background thread automatically.
@@ -343,7 +343,7 @@ class App:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
-        pygame.display.set_caption("Physics Animator")
+        pygame.display.set_caption("Vectorium - Physics in Motion")
         self.clock = pygame.time.Clock()
 
         self.font_title  = pygame.font.SysFont("segoeui,arial", 24, bold=True)
@@ -510,7 +510,7 @@ class App:
 
         else:
             # Empty / welcome state
-            big = self.font_title.render("Physics Animator", True, ACCENT)
+            big = self.font_title.render("Vectorium - Physics in motion", True, ACCENT)
             self.screen.blit(big, big.get_rect(center=(self.canvas_rect.width // 2, self.canvas_rect.height // 2 - 30)))
             sub_text = self.font_body.render("Describe an event below — watch it play out, scrub through time.", True, TEXT_MUTED)
             self.screen.blit(sub_text, sub_text.get_rect(center=(self.canvas_rect.width // 2, self.canvas_rect.height // 2 + 10)))

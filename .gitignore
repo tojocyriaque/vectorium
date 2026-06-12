@@ -4,3 +4,5 @@ __pycache__/
 .python-version
 presentation_report.md
 seminar_presentation.md
+*.pdf
+*.pptx
