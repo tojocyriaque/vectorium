@@ -7,17 +7,18 @@ Vectorium is an interactive educational tool that transforms natural language de
 ## ✨ Features
 
 - **Natural Language to Physics**: Describe an event (e.g., "A ball rolls off a table and bounces") and watch it come to life.
+- **Strict Physics Enforcement**: Eliminates AI hallucinations with rigorous piecewise-linear validation, instantaneous step-function collisions, and pre-collision bend removal.
 - **Physics Narration Engine**: Explanations, formulas, and emphasis highlights are perfectly synchronized with the physical motion, resembling a live lecture.
-- **Vector Rendering**: Real-time rendering of velocity (blue), acceleration (green), and force (red) vectors perfectly timed to physical interactions.
+- **Vector Rendering & Dynamic Trails**: Real-time rendering of velocity (blue), acceleration (green), and force (red) vectors perfectly timed to physical interactions, alongside dynamic motion trails that clear accurately on collisions.
 - **Canvas-First UI**: A clean, cinematic, distraction-free "whiteboard" style environment powered by Pygame.
-- **Dual AI Backends**: Support for cutting-edge LLMs via Groq (Llama 3) and Google Gemini (Gemini 2.0 Flash) to generate accurate physics JSON schemas.
+- **Dual AI Backends**: Support for cutting-edge LLMs via Groq (Llama 3.3) and Google Gemini (Gemini 2.0 Flash) to generate accurate physics JSON schemas.
 
 ## 🏗️ Architecture
 
-The system consists of two tightly coupled components:
+The system consists of two tightly coupled components, explicitly refactored to feature a highly conversational and human-readable codebase:
 
-1. **Backend (`apis.py`)**: A FastAPI server that handles prompt generation, LLM orchestration (Groq/Gemini), and rigorous JSON schema validation. It structures physics events into chronological "teaching moments".
-2. **Frontend (`gui.py`)**: A Pygame rendering engine that interpolates motion keyframes, renders floating subtitles and formulas, and manages the interactive playback timeline.
+1. **Backend (`apis.py`)**: A FastAPI server that handles prompt generation, LLM orchestration, and rigorous JSON schema validation (the "physics bouncer"). It structures physics events into chronological teaching moments.
+2. **Frontend (`gui.py`)**: A Pygame rendering engine that computes instantaneous velocities via finite difference, draws vectors, renders floating subtitles and formulas, and manages the interactive playback timeline.
 
 ## 🚀 Getting Started
 
@@ -47,19 +48,15 @@ The system consists of two tightly coupled components:
 
 ### Running the Application
 
-1. **Start the FastAPI Backend**:
-   In your terminal, run the following command to start the backend server on `http://127.0.0.1:8000`:
-   ```bash
-   python -m uvicorn apis:app --reload
-   ```
+Vectorium has been streamlined so you only need to run a single command. The Pygame frontend will automatically spin up the FastAPI backend in a background thread for you.
 
-2. **Launch the Pygame Frontend**:
-   In a separate terminal, launch the GUI:
+1. **Launch the Application**:
+   In your terminal, simply run:
    ```bash
    python gui.py
    ```
 
-3. **Generate an Animation**:
+2. **Generate an Animation**:
    In the Pygame window, type a physical event description into the bottom chat bar (e.g., "A pendulum swings back and forth losing energy") and hit Enter to watch the narration engine generate the scene.
 
 ## 🔮 Future Roadmap
