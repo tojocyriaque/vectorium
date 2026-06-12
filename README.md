@@ -1,8 +1,8 @@
-# Physics Animator
+# Vectorium
 
 **AI-Powered Physics Animation & Narration Engine**
 
-Physics Animator is an interactive educational tool that transforms natural language descriptions of physics events into real-time, time-synchronized animations. It acts as a digital physics professor, generating motion, physics vectors, LaTeX formulas, and step-by-step narrations from simple text prompts.
+Vectorium is an interactive educational tool that transforms natural language descriptions of physics events into real-time, time-synchronized animations. It acts as a digital physics professor, generating motion, physics vectors, LaTeX formulas, and step-by-step narrations from simple text prompts.
 
 ## ✨ Features
 
@@ -30,12 +30,12 @@ The system consists of two tightly coupled components:
 
 1. Clone the repository and navigate to the project directory:
    ```bash
-   cd physics-animator
+   cd vectorium
    ```
 
 2. Install the required dependencies:
    ```bash
-   pip install fastapi uvicorn httpx python-dotenv pygame requests pydantic
+   pip install -r requirements.txt
    ```
    *(Note: Ensure you are using `pygame-ce` for the best performance and compatibility).*
 
