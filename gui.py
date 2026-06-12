@@ -47,6 +47,25 @@ def ease_in_out(t):
 
 
 def get_prop(keyframes, t, prop, default=0):
+    """Linear interpolation for physics properties (position, rotation, scale).
+    Keyframes encode the physics curve; the engine interpolates linearly between them."""
+    if not keyframes: return default
+    kfs = sorted(keyframes, key=lambda k: k["t"])
+    if t <= kfs[0]["t"]:
+        return kfs[0].get(prop, default)
+    if t >= kfs[-1]["t"]:
+        return kfs[-1].get(prop, default)
+    for a, b in zip(kfs, kfs[1:]):
+        if a["t"] <= t <= b["t"]:
+            span = b["t"] - a["t"]
+            alpha = 0 if span == 0 else (t - a["t"]) / span
+            # Linear interpolation — physics correctness over cosmetic smoothing
+            return lerp(a.get(prop, default), b.get(prop, default), alpha)
+    return default
+
+
+def get_prop_smooth(keyframes, t, prop, default=0):
+    """Ease-in-out interpolation for cosmetic properties (opacity)."""
     if not keyframes: return default
     kfs = sorted(keyframes, key=lambda k: k["t"])
     if t <= kfs[0]["t"]:
@@ -60,6 +79,43 @@ def get_prop(keyframes, t, prop, default=0):
             alpha = ease_in_out(alpha)
             return lerp(a.get(prop, default), b.get(prop, default), alpha)
     return default
+
+
+def compute_velocity(keyframes, t):
+    """Compute instantaneous velocity (vx, vy, speed) from position keyframes
+    using finite differences. Returns the derivative of position at time t."""
+    EPS = 0.016  # ~1 frame at 60fps
+    x0 = get_prop(keyframes, t - EPS, "x", 0)
+    y0 = get_prop(keyframes, t - EPS, "y", 0)
+    x1 = get_prop(keyframes, t + EPS, "x", 0)
+    y1 = get_prop(keyframes, t + EPS, "y", 0)
+    dt = 2 * EPS
+    vx = (x1 - x0) / dt
+    vy = (y1 - y0) / dt
+    speed = math.hypot(vx, vy)
+    return vx, vy, speed
+
+
+def compute_rolling_rotation(keyframes, t, radius):
+    """Compute rolling rotation (degrees) by integrating horizontal displacement
+    from t=0 to t. Uses rolling-without-slipping: θ = Δx / radius.
+    Samples at keyframe timestamps for accuracy."""
+    if not keyframes or radius <= 0:
+        return 0.0
+    kfs = sorted(keyframes, key=lambda k: k["t"])
+    # Collect sample points: all keyframe timestamps up to t, plus t itself
+    sample_times = [kf["t"] for kf in kfs if kf["t"] <= t]
+    if not sample_times or sample_times[-1] < t:
+        sample_times.append(t)
+    total_dx = 0.0
+    for i in range(1, len(sample_times)):
+        x_prev = get_prop(kfs, sample_times[i - 1], "x", 0)
+        x_curr = get_prop(kfs, sample_times[i], "x", 0)
+        total_dx += (x_curr - x_prev)
+    # rolling without slipping: θ(radians) = arc_length / radius
+    # positive dx = clockwise rotation (positive degrees in our convention)
+    rotation_deg = math.degrees(total_dx / radius)
+    return rotation_deg
 
 
 def hex_to_rgb(h):
@@ -79,36 +135,56 @@ def with_alpha(color, alpha):
 # ─── Drawing primitives ────────────────────────────────────────────────────────
 
 def draw_object(surface, obj, t, trail_points=None):
-    x = get_prop(obj.get("keyframes", []), t, "x", 300)
-    y = get_prop(obj.get("keyframes", []), t, "y", 200)
-    rotation = get_prop(obj.get("keyframes", []), t, "rotation", 0)
-    opacity = get_prop(obj.get("keyframes", []), t, "opacity", 1)
-    scale_x = get_prop(obj.get("keyframes", []), t, "scaleX", 1)
-    scale_y = get_prop(obj.get("keyframes", []), t, "scaleY", 1)
+    kfs = obj.get("keyframes", [])
+    x = get_prop(kfs, t, "x", 300)
+    y = get_prop(kfs, t, "y", 200)
+    opacity = get_prop_smooth(kfs, t, "opacity", 1)  # cosmetic → eased
+    scale_x = get_prop(kfs, t, "scaleX", 1)
+    scale_y = get_prop(kfs, t, "scaleY", 1)
 
     w = obj.get("width", 30) * scale_x
     h = obj.get("height", 30) * scale_y
-    color = hex_to_rgb(obj.get("color", "#3b82f6"))
-    shape = obj.get("shape", "rect")
+    visual = obj.get("visual", {})
+    v_type = visual.get("type", obj.get("shape", "box"))
+    material = visual.get("material", "matte")
+    color = hex_to_rgb(visual.get("color", obj.get("color", "#3b82f6")))
+
+    # Compute rotation: auto-rolling for spheres, keyframe-based for everything else
+    is_rolling = v_type in ["billiard_ball", "sphere", "circle"]
+    if is_rolling:
+        radius = max(1, obj.get("width", 30) / 2)
+        rotation = compute_rolling_rotation(kfs, t, radius)
+    else:
+        rotation = get_prop(kfs, t, "rotation", 0)
+
     alpha = max(0, min(255, int(opacity * 255)))
 
     pad = int(max(w, h) * 1.7) + 6
     obj_surf = pygame.Surface((pad, pad), pygame.SRCALPHA)
     cx, cy = pad // 2, pad // 2
 
-    if shape == "circle":
+    if is_rolling:
         r = int(w / 2)
         pygame.draw.circle(obj_surf, (*color, alpha), (cx, cy), r)
         pygame.draw.circle(obj_surf, (255, 255, 255, 80), (cx, cy), r, 2)
-    elif shape == "rect":
+        if material == "glossy" or v_type == "billiard_ball":
+            hl_rect = pygame.Rect(cx - r*0.4, cy - r*0.7, r*0.6, r*0.4)
+            pygame.draw.ellipse(obj_surf, (255, 255, 255, 120), hl_rect)
+        # Rolling indicator: small dot on circumference to visualize spin
+        if r > 6:
+            dot_angle = math.radians(rotation)
+            dot_x = cx + int((r - 3) * math.cos(dot_angle))
+            dot_y = cy + int((r - 3) * math.sin(dot_angle))
+            pygame.draw.circle(obj_surf, (255, 255, 255, 180), (dot_x, dot_y), max(2, r // 6))
+    elif v_type in ["cube", "box", "table", "ground", "obstacle", "rect"]:
         rect = pygame.Rect(0, 0, int(w), int(h)); rect.center = (cx, cy)
         pygame.draw.rect(obj_surf, (*color, alpha), rect, border_radius=4)
         pygame.draw.rect(obj_surf, (255, 255, 255, 80), rect, 2, border_radius=4)
-    elif shape == "triangle":
+    elif v_type == "triangle":
         pts = [(cx, cy - h / 2), (cx + w / 2, cy + h / 2), (cx - w / 2, cy + h / 2)]
         pygame.draw.polygon(obj_surf, (*color, alpha), pts)
         pygame.draw.polygon(obj_surf, (255, 255, 255, 80), pts, 2)
-    elif shape == "line":
+    elif v_type == "line":
         thickness = max(2, int(h))
         pygame.draw.line(obj_surf, (*color, alpha), (cx - w / 2, cy), (cx + w / 2, cy), thickness)
 
@@ -117,7 +193,7 @@ def draw_object(surface, obj, t, trail_points=None):
     surface.blit(rotated, rect)
 
     label = obj.get("label", "")
-    if label and shape != "line":
+    if label and v_type != "line":
         font = pygame.font.SysFont("segoeui,arial", 13, bold=True)
         text = font.render(label, True, TEXT_MAIN)
         shadow = font.render(label, True, WHITE)
@@ -128,60 +204,84 @@ def draw_object(surface, obj, t, trail_points=None):
         surface.blit(text, pos)
 
 def draw_vectors(surface, obj, t):
+    """Draw physics vectors anchored to the object's current position.
+    - velocity vectors: direction/magnitude computed from actual motion (position derivative)
+    - acceleration/force vectors: direction from JSON, anchored to object position
+    - force vectors use a tight visibility window (±0.15s) for instantaneous feel
+    """
     vectors = obj.get("vectors", [])
     if not vectors: return
-    
-    v_by_type = {}
-    for v in vectors:
-        v_by_type.setdefault(v.get("type", "velocity"), []).append(v)
-        
-    for v_type, vecs in v_by_type.items():
-        vecs.sort(key=lambda k: k["t"])
-        if len(vecs) == 1:
-            v = vecs[0]
-            dt = abs(t - v["t"])
-            if dt > 0.5: continue
-            alpha = max(0, 1.0 - (dt / 0.5))
-            v_dx, v_dy, v_mag = v.get("dx", 0), v.get("dy", 0), v.get("magnitude", 0) * alpha
-            v_x, v_y = v.get("x", 0), v.get("y", 0)
-        else:
-            if t < vecs[0]["t"] - 0.5 or t > vecs[-1]["t"] + 0.5:
-                continue
-            
-            v_dx = get_prop(vecs, t, "dx", 0)
-            v_dy = get_prop(vecs, t, "dy", 0)
-            v_mag = get_prop(vecs, t, "magnitude", 0)
-            v_x = get_prop(vecs, t, "x", 0)
-            v_y = get_prop(vecs, t, "y", 0)
-            
-            if t < vecs[0]["t"]:
-                v_mag *= max(0, 1.0 - (vecs[0]["t"] - t) / 0.5)
-            elif t > vecs[-1]["t"]:
-                v_mag *= max(0, 1.0 - (t - vecs[-1]["t"]) / 0.5)
 
-        if v_mag < 0.5: continue
-        
-        if v_type == "velocity": color = (59, 130, 246)
-        elif v_type == "acceleration": color = (16, 185, 129)
-        elif v_type == "force": color = (239, 68, 68)
-        else: color = (100, 100, 100)
-        
-        length = v_mag * 3 
+    kfs = obj.get("keyframes", [])
+    # Object's current position — single source of truth for vector origin
+    obj_x = get_prop(kfs, t, "x", 300)
+    obj_y = get_prop(kfs, t, "y", 200)
+
+    for v in vectors:
+        v_type = v.get("type", "velocity")
+        v_t = v.get("t", 0)
+
+        # Visibility window: force is sharp (±0.15s), others fade over ±0.3s
+        if v_type == "force":
+            window = 0.15
+        else:
+            window = 0.3
+
+        dt = abs(t - v_t)
+        if dt > window:
+            continue
+        fade = max(0.0, 1.0 - (dt / window))
+
+        # Compute direction and magnitude
+        if v_type == "velocity":
+            # COMPUTED from actual motion — derivative of position at this moment
+            vx, vy, speed = compute_velocity(kfs, t)
+            if speed < 1.0:
+                continue  # object essentially stationary, skip velocity vector
+            v_dx, v_dy = vx, vy
+            # Scale speed to visual magnitude (px/s → visual arrow length)
+            v_mag = min(50.0, speed * 0.15) * fade
+        else:
+            # acceleration/force: use JSON-specified direction, anchored to object
+            v_dx = v.get("dx", 0)
+            v_dy = v.get("dy", 0)
+            v_mag = v.get("magnitude", 10) * fade
+
+        if v_mag < 0.5:
+            continue
+
+        # Color by type
+        if v_type == "velocity":    color = (59, 130, 246)   # blue
+        elif v_type == "acceleration": color = (16, 185, 129) # green
+        elif v_type == "force":     color = (239, 68, 68)    # red
+        else:                       color = (100, 100, 100)
+
+        # Normalize direction
+        length = v_mag * 3
         dist = math.hypot(v_dx, v_dy)
         if dist > 0.001:
             nx, ny = v_dx / dist, v_dy / dist
         else:
             nx, ny = 1, 0
-            
-        end_x = v_x + nx * length
-        end_y = v_y + ny * length
-        
-        pygame.draw.line(surface, color, (v_x, v_y), (end_x, end_y), 3)
+
+        # Draw from object center
+        end_x = obj_x + nx * length
+        end_y = obj_y + ny * length
+
+        # Arrow shaft
+        pygame.draw.line(surface, color, (obj_x, obj_y), (end_x, end_y), 3)
+        # Arrowhead
         head_len = 8
         angle = math.atan2(ny, nx)
         p1 = (end_x - head_len * math.cos(angle - math.pi/6), end_y - head_len * math.sin(angle - math.pi/6))
         p2 = (end_x - head_len * math.cos(angle + math.pi/6), end_y - head_len * math.sin(angle + math.pi/6))
         pygame.draw.polygon(surface, color, [(end_x, end_y), p1, p2])
+
+        # Label the vector type
+        label_font = pygame.font.SysFont("segoeui,arial", 10, bold=True)
+        label_surf = label_font.render(v_type[0].upper(), True, color)
+        label_pos = (int(end_x + 4), int(end_y - 8))
+        surface.blit(label_surf, label_pos)
 
 def rounded_rect(surface, rect, color, radius=10, width=0):
     pygame.draw.rect(surface, color, rect, width, border_radius=radius)
@@ -211,8 +311,8 @@ def wrap_text(text, font, max_width):
     return lines
 
 
-def get_current_explanation(explanations, t):
-    sorted_exps = sorted(explanations, key=lambda e: e["t"])
+def get_current_narration(narration, t):
+    sorted_exps = sorted(narration, key=lambda e: e["t"])
     if not sorted_exps:
         return {"text": ""}
     best = sorted_exps[0]
@@ -374,8 +474,8 @@ class App:
             # trails drawn directly at screen scale (after objects, subtly)
             for oid, pts in self.trails.items():
                 obj = next((o for o in self.anim_data["objects"] if o["id"] == oid), None)
-                if obj and obj.get("shape") == "circle" and len(pts) > 1:
-                    color = hex_to_rgb(obj.get("color", "#3b82f6"))
+                if obj and obj.get("visual", {}).get("type", obj.get("shape")) in ["billiard_ball", "sphere", "circle"] and len(pts) > 1:
+                    color = hex_to_rgb(obj.get("visual", {}).get("color", obj.get("color", "#3b82f6")))
                     for i, (px, py) in enumerate(pts[:-1]):
                         fade = int(90 * (i + 1) / len(pts))
                         pygame.draw.circle(sub, with_alpha(color, fade), (int(px), int(py)), 3)
@@ -418,7 +518,7 @@ class App:
 
     def draw_explanation(self):
         if not self.anim_data: return
-        exp = get_current_explanation(self.anim_data.get("explanations", []), self.current_t)
+        exp = get_current_narration(self.anim_data.get("narration", self.anim_data.get("explanations", [])), self.current_t)
         text = exp.get("text", "")
         formula = exp.get("formula", "")
         if not text and not formula: return
@@ -468,8 +568,8 @@ class App:
             fill = pygame.Rect(self.scrubber_rect.x, self.scrubber_rect.y, fill_w, self.scrubber_rect.height)
             rounded_rect(self.screen, fill, ACCENT, radius=4)
 
-        # explanation markers
-        for ex in self.anim_data.get("explanations", []):
+        # narration markers
+        for ex in self.anim_data.get("narration", self.anim_data.get("explanations", [])):
             mx = self.scrubber_rect.x + int(self.scrubber_rect.width * (ex["t"] / duration))
             pygame.draw.circle(self.screen, (255, 215, 0) if ex.get("formula") else ACCENT3, (mx, self.scrubber_rect.centery), 4)
 
