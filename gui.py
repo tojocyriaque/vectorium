@@ -47,8 +47,11 @@ def ease_in_out(t):
 
 
 def get_prop(keyframes, t, prop, default=0):
-    """Linear interpolation for physics properties (position, rotation, scale).
-    Keyframes encode the physics curve; the engine interpolates linearly between them."""
+    """
+    Find out what a property (like position or scale) should be at time 't'.
+    Since we care about strict physics, we use plain old linear interpolation here.
+    No fancy smoothing or easing curves, just straight lines between the keyframes!
+    """
     if not keyframes: return default
     kfs = sorted(keyframes, key=lambda k: k["t"])
     if t <= kfs[0]["t"]:
@@ -65,7 +68,11 @@ def get_prop(keyframes, t, prop, default=0):
 
 
 def get_prop_smooth(keyframes, t, prop, default=0):
-    """Ease-in-out interpolation for cosmetic properties (opacity)."""
+    """
+    Unlike physics properties, cosmetic things like opacity look better 
+    with a little bit of smoothing. We use an ease-in-out curve here 
+    so fades feel natural instead of abrupt.
+    """
     if not keyframes: return default
     kfs = sorted(keyframes, key=lambda k: k["t"])
     if t <= kfs[0]["t"]:
@@ -82,8 +89,12 @@ def get_prop_smooth(keyframes, t, prop, default=0):
 
 
 def compute_velocity(keyframes, t):
-    """Compute instantaneous velocity (vx, vy, speed) from position keyframes
-    using finite differences. Returns the derivative of position at time t."""
+    """
+    We need to know how fast an object is moving right *now*.
+    To figure this out, we peek slightly into the past and slightly into the future 
+    (about one frame's worth) and see how far the object moved. 
+    This gives us a solid estimate of the instantaneous velocity!
+    """
     EPS = 0.016  # ~1 frame at 60fps
     x0 = get_prop(keyframes, t - EPS, "x", 0)
     y0 = get_prop(keyframes, t - EPS, "y", 0)
@@ -97,9 +108,11 @@ def compute_velocity(keyframes, t):
 
 
 def compute_rolling_rotation(keyframes, t, radius):
-    """Compute rolling rotation (degrees) by integrating horizontal displacement
-    from t=0 to t. Uses rolling-without-slipping: θ = Δx / radius.
-    Samples at keyframe timestamps for accuracy."""
+    """
+    If an object is a ball, how much should it have spun by now?
+    We figure this out by adding up all the horizontal distance it has traveled 
+    since the beginning, and use the 'rolling without slipping' formula.
+    """
     if not keyframes or radius <= 0:
         return 0.0
     kfs = sorted(keyframes, key=lambda k: k["t"])
