@@ -2,7 +2,7 @@
 Physics Animator — Pygame Frontend
 A clean, "explainer video" style UI (whiteboard / educational theme).
 
-Starts apis.py in a background thread automatically.
+Starts physics_ai.py in a background thread automatically.
 Run:
     python gui.py
 """
@@ -15,9 +15,8 @@ import math
 import pygame
 import requests
 
-import apis  # apis.py (FastAPI + Groq/Gemini)
+import physics_ai  # physics_ai.py (Groq/Gemini)
 
-API_URL = "http://127.0.0.1:8000/generate"
 
 # ─── Layout Defaults ────────────────────────────────────────────────────────
 WIDTH, HEIGHT = 760, 760
@@ -336,10 +335,7 @@ def find_what_to_say_right_now(narration, t):
 
 
 def ask_backend_for_animation(description):
-    res = requests.post(API_URL, json={"description": description}, timeout=120)
-    res.raise_for_status()
-    return res.json()
-
+    return physics_ai.generate_animation_from_all_ais(description)
 
 # ─── Main app ──────────────────────────────────────────────────────────────────
 
@@ -439,7 +435,7 @@ class App:
         if self.anim_data:
             sub = self.screen.subsurface(self.canvas_rect)
             
-            # preserve aspect ratio (600x400 from apis)
+            # preserve aspect ratio (600x400 from physics_ai)
             aspect = 600 / 400
             if self.canvas_rect.height > 0:
                 rect_aspect = self.canvas_rect.width / self.canvas_rect.height
@@ -796,9 +792,5 @@ class App:
 
 
 if __name__ == "__main__":
-    server_thread = threading.Thread(target=apis.run_server, daemon=True)
-    server_thread.start()
-    print("apis running on http://127.0.0.1:8000  (opening Pygame window...)")
-
     App().run()
     sys.exit(0)

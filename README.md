@@ -17,8 +17,8 @@ Vectorium is an interactive educational tool that transforms natural language de
 
 The system consists of two tightly coupled components, explicitly refactored to feature a highly conversational and human-readable codebase:
 
-1. **Backend (`apis.py`)**: A FastAPI server that handles prompt generation, LLM orchestration, and rigorous JSON schema validation (the "physics bouncer"). It structures physics events into chronological teaching moments.
-2. **Frontend (`gui.py`)**: A Pygame rendering engine that computes instantaneous velocities via finite difference, draws vectors, renders floating subtitles and formulas, and manages the interactive playback timeline.
+1. **Backend (`physics_ai.py`)**: A standalone Python module that handles prompt generation, LLM orchestration, and rigorous JSON schema validation (the "physics bouncer"). It structures physics events into chronological teaching moments.
+2. **Frontend (`gui.py`)**: A Pygame rendering engine that directly calls the backend in a background thread. It computes instantaneous velocities via finite difference, draws vectors, renders floating subtitles and formulas, and manages the interactive playback timeline.
 
 ## 🚀 Getting Started
 
@@ -48,7 +48,7 @@ The system consists of two tightly coupled components, explicitly refactored to 
 
 ### Running the Application
 
-Vectorium has been streamlined so you only need to run a single command. The Pygame frontend will automatically spin up the FastAPI backend in a background thread for you.
+Vectorium has been streamlined so you only need to run a single command. The Pygame frontend will automatically call the AI generation module in a background thread for you.
 
 1. **Launch the Application**:
    In your terminal, simply run:

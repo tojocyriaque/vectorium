@@ -1,10 +1,8 @@
 """
-Physics Animator — Backend (FastAPI + Groq/Gemini)
+Physics Animator — Backend (Groq/Gemini)
 
-Run standalone:
-    uvicorn backend:app --reload
-
-Or import `run_server` / `app` from another module (e.g. app.py).
+This is a standalone module that talks directly to the AI providers 
+to generate our physics animations. No web servers needed!
 """
 
 import os
@@ -13,17 +11,8 @@ import json
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import uvicorn
 
 load_dotenv()
-
-app = FastAPI(title="Physics Animator API")
-app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["POST", "GET"], allow_headers=["*"]
-)
 
 # ─── Prompt ───────────────────────────────────────────────────────────────────
 
@@ -185,11 +174,6 @@ FEW_SHOT_ASSISTANT = json.dumps({
     ],
     "physics_summary": "This demonstrates projectile motion: horizontal velocity stays constant while gravity accelerates the ball downward. Each bounce loses kinetic energy to heat and sound, so bounce height decreases until the ball settles."
 }, indent=2)
-
-
-class AnimationRequest(BaseModel):
-    description: str
-
 
 # ─── JSON cleanup & validation ────────────────────────────────────────────────
 
@@ -408,30 +392,27 @@ def ask_gemini_for_animation(description: str) -> dict:
 
 PROVIDERS = [("Groq", ask_groq_for_animation), ("Gemini", ask_gemini_for_animation)]
 
+class AllProvidersFailedError(Exception):
+    """Raised when none of our AI models can generate the animation."""
+    pass
 
-# ─── Routes ──────────────────────────────────────────────────────────────────
-
-@app.get("/")
-def root():
-    configured = [n for n, _ in PROVIDERS if os.getenv(f"{n.upper()}_API_KEY")]
-    return {"status": "Physics Animator API is running", "configured_providers": configured}
-
-
-@app.get("/providers")
-def see_which_ais_are_awake():
-    result = {}
+def check_provider_status() -> dict:
+    """Checks which AI models we have keys for."""
+    status = {}
     for name, _ in PROVIDERS:
         key = os.getenv(f"{name.upper()}_API_KEY")
-        result[name] = f"loaded ({key[:8]}...)" if key else "not set in .env"
-    return result
+        status[name] = f"ready ({key[:8]}...)" if key else "missing key in .env"
+    return status
 
-
-@app.post("/generate")
-def try_generating_animation_from_all_ais(req: AnimationRequest):
+def generate_animation_from_all_ais(description: str):
+    """
+    Tries to get the animation from our available AI providers.
+    If one fails, it gracefully falls back to the next one.
+    """
     errors = []
     for name, call_fn in PROVIDERS:
         try:
-            data = call_fn(req.description)
+            data = call_fn(description)
             data = enforce_physics_rules(data)
             data["_provider"] = name
             return data
@@ -444,13 +425,5 @@ def try_generating_animation_from_all_ais(req: AnimationRequest):
         except Exception as e:
             errors.append(f"{name}: {e}")
 
-    print("All providers failed !!!! ", errors)
-    raise HTTPException(status_code=502, detail="All providers failed. Errors:\n" + "\n".join(errors))
-
-
-def run_server(host="127.0.0.1", port=8000):
-    uvicorn.run(app, host=host, port=port, log_level="warning")
-
-
-if __name__ == "__main__":
-    run_server()
+    print("Uh oh, all AI providers failed! Errors:", errors)
+    raise AllProvidersFailedError("All providers failed. Errors:\n" + "\n".join(errors))
